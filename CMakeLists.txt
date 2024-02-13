@@ -28,6 +28,7 @@ set(node_plugins "")
 
 add_library(ipcamera_component SHARED
   src/ipcamera_component.cpp)
+target_link_libraries(ipcamera_component opencv_videoio)
 target_compile_definitions(ipcamera_component
   PRIVATE "COMPOSITION_BUILDING_DLL")
 
@@ -52,8 +53,7 @@ endif()
 
 add_executable(composition
   src/composition.cpp)
-target_link_libraries(composition
-  ipcamera_component)
+target_link_libraries(composition opencv_videoio ipcamera_component)
 ament_target_dependencies(composition
   "rclcpp")
 
