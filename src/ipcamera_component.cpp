@@ -11,20 +11,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include <fstream>
-#include <memory>
-#include <stdexcept>
-#include <string>
-#include <rclcpp/rclcpp.hpp>
-#include <rclcpp/parameter.hpp>
+
 #include "ros2_ipcamera/ipcamera_component.hpp"
+#include <cv_bridge/cv_bridge.hpp>
+
 
 
 namespace ros2_ipcamera
 {
   IpCamera::IpCamera(const std::string & node_name, const rclcpp::NodeOptions & options)
-  : Node(node_name, options),
-    qos_(rclcpp::QoS(rclcpp::KeepLast(1)).best_effort())
+  : Node(node_name, options),cim(this),
+    qos_(rclcpp::QoS(rclcpp::KeepLast(1)).best_effort()
+    )
   {
     RCLCPP_INFO(this->get_logger(), "namespace: %s", this->get_namespace());
     RCLCPP_INFO(this->get_logger(), "name: %s", this->get_name());
@@ -36,10 +34,11 @@ namespace ros2_ipcamera
 
     this->configure();
 
-    //TODO(Tasuku): add call back to handle parameter events.
-    // Set up publishers.
-    this->pub_ = image_transport::create_camera_publisher(
-      this, "~/image_raw", qos_.get_rmw_qos_profile());
+    // publisher for raw and compressed image
+    pub_image = this->create_publisher<sensor_msgs::msg::Image>("~/image_raw", 1);
+    pub_image_compressed =
+      this->create_publisher<sensor_msgs::msg::CompressedImage>("~/image_raw/compressed", 1);
+    pub_ci = this->create_publisher<sensor_msgs::msg::CameraInfo>("~/camera_info", 1);
 
     this->execute();
   }
@@ -82,13 +81,13 @@ namespace ros2_ipcamera
     // TODO(Tasuku): move to on_configure() when rclcpp_lifecycle available.
     // https://docs.ros.org/api/camera_info_manager/html/classcamera__info__manager_1_1CameraInfoManager.html#_details
     // Make sure that cname is equal to camera_name in camera_info.yaml file. Default cname is set to "camera".
-    cinfo_manager_ = std::make_shared<camera_info_manager::CameraInfoManager>(this);
-    if (cinfo_manager_->validateURL(camera_calibration_file_param_)) {
-      cinfo_manager_->loadCameraInfo(camera_calibration_file_param_);
+    if (cim.validateURL(camera_calibration_file_param_)) {
+      cim.loadCameraInfo(camera_calibration_file_param_);
     } else {
       RCLCPP_WARN(node_logger, "CameraInfo URL not valid.");
       RCLCPP_WARN(node_logger, "URL IS %s", camera_calibration_file_param_.c_str());
     }
+
   }
 
   void
@@ -126,7 +125,7 @@ namespace ros2_ipcamera
   {
     rclcpp::Rate loop_rate(freq_);
 
-    auto camera_info_msg = std::make_shared<sensor_msgs::msg::CameraInfo>(cinfo_manager_->getCameraInfo());
+    auto camera_info_msg = std::make_shared<sensor_msgs::msg::CameraInfo>(cim.getCameraInfo());
 
     // Initialize OpenCV image matrices.
     cv::Mat frame;
@@ -139,17 +138,75 @@ namespace ros2_ipcamera
       msg->is_bigendian = false;
 
       // Get the frame from the video capture.
-      this->cap_ >> frame;
+      bool res = this->cap_.read(frame);
+      if(!res)
+      {
+        //std::cout << "Frame Capture failed." << std::endl;
+        //loop_rate.sleep();        
+      }
+      //this->cap_ >> frame;
       // Check if the frame was grabbed correctly
       if (!frame.empty()) {
         // Convert to a ROS image
-        convert_frame_to_message(frame, frame_id, *msg, *camera_info_msg);
-        // Publish the image message and increment the frame_id.
-        this->pub_.publish(std::move(msg), camera_info_msg);
+
+        auto msg_img = std::make_unique<sensor_msgs::msg::Image>();
+        auto msg_img_compressed = std::make_unique<sensor_msgs::msg::CompressedImage>();
+
+        // We're getting uncompressed images from cv2
+        // copy cv information into ros message
+        msg_img->height = frame.rows;
+        msg_img->width = frame.cols;
+        msg_img->encoding = mat_type2encoding(frame.type());
+        msg_img->is_bigendian = (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__);
+        msg_img->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
+        size_t size = frame.step * frame.rows;
+        msg_img->data.resize(size);
+        memcpy(&msg_img->data[0], frame.data, size);
+        rclcpp::Time timestamp = this->get_clock()->now();
+        msg_img->header.frame_id = std::to_string(frame_id);
+        msg_img->header.stamp = timestamp;
+        camera_info_msg->header.frame_id = std::to_string(frame_id);
+        camera_info_msg->header.stamp = timestamp;
+
+        // compress to jpeg
+        if (pub_image_compressed->get_subscription_count())        
+          cv_bridge::toCvCopy(*msg_img)->toCompressedImageMsg(*msg_img_compressed);
+
+        msg_img->height = frame.rows;
+        msg_img->width = frame.cols;
+        msg_img->encoding = mat_type2encoding(frame.type());
+        msg_img->is_bigendian = (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__);
+        msg_img->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
+        msg_img->data.resize(size);
+        memcpy(&msg_img->data[0], frame.data, size);
+        msg_img->header.frame_id = std::to_string(frame_id);
+        msg_img->header.stamp = timestamp;
+        camera_info_msg->header.frame_id = std::to_string(frame_id);
+        camera_info_msg->header.stamp = timestamp;
+
+        // compress to jpeg
+        if (pub_image_compressed->get_subscription_count())
+        {
+          cv_bridge::toCvCopy(*msg_img)->toCompressedImageMsg(*msg_img_compressed);
+        }
+        pub_image->publish(std::move(msg_img));
+        pub_image_compressed->publish(std::move(msg_img_compressed));
+
+        sensor_msgs::msg::CameraInfo ci = cim.getCameraInfo();
+        
+        // send image data
+        std_msgs::msg::Header hdr;
+        hdr.stamp = timestamp;
+        hdr.frame_id = "camera";
+        pub_ci->publish(ci);
         ++frame_id;
+      }
+      else{
+        std::cout << "Empty frame..." << std::endl;
       }
       loop_rate.sleep();
     }
+    std::cout << "Exiting loop..." << std::endl;
   }
 
   std::string

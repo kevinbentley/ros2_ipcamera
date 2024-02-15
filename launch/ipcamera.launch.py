@@ -18,6 +18,7 @@ def generate_launch_description():
     # Alternatively can use "package://" as discussed:
     # https://answers.ros.org/question/333521/ros2-url-to-camera_info-yaml-not-being-recognized/
     config_file = 'file://' + os.path.join(config_dir, "camera_info.yaml")
+    print("Using camera config file {}".format(config_file))
 
     ipcamera_node = ComposableNode(
                     package='ros2_ipcamera',

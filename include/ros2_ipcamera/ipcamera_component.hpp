@@ -14,12 +14,61 @@
 #ifndef IPCAMERA_COMPONENT_H
 #define IPCAMERA_COMPONENT_H
 
+#include <algorithm>
+#include <array>
+#include <camera_info_manager/camera_info_manager.hpp>
+#include <cassert>
+#include <cctype>
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+#include <cv_bridge/cv_bridge.hpp>
+#include <functional>
+#include <iostream>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
+
+#include <fstream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+
+#include <rcl/context.h>
+#include <rcl_interfaces/msg/detail/floating_point_range__struct.hpp>
+#include <rcl_interfaces/msg/detail/integer_range__struct.hpp>
+#include <rcl_interfaces/msg/detail/parameter_descriptor__struct.hpp>
+#include <rcl_interfaces/msg/detail/set_parameters_result__struct.hpp>
+#include <rclcpp/logging.hpp>
+#include <rclcpp/node.hpp>
+#include <rclcpp/node_interfaces/node_parameters_interface.hpp>
+#include <rclcpp/parameter.hpp>
+#include <rclcpp/parameter_value.hpp>
+#include <rclcpp/publisher.hpp>
+#include <rclcpp/event_handler.hpp>
+#include <rclcpp/time.hpp>
+#include <rclcpp_components/register_node_macro.hpp>
+#include <sensor_msgs/msg/detail/camera_info__struct.hpp>
+#include <sensor_msgs/msg/detail/compressed_image__struct.hpp>
+#include <sensor_msgs/msg/detail/image__struct.hpp>
+#include <std_msgs/msg/detail/header__struct.hpp>
+#include <stdexcept>
+#include <string>
+#include <sys/mman.h>
+#include <tuple>
+#include <type_traits>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
 #include "opencv2/highgui/highgui.hpp"
 #include "opencv2/imgproc.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/logger.hpp>
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
+//#include "sensor_msgs/msg/CompressedImage.h"
 #include "ros2_ipcamera/visibility_control.hpp"
 #include <camera_info_manager/camera_info_manager.hpp>
 #include <image_transport/image_transport.hpp>
@@ -69,10 +118,19 @@ namespace ros2_ipcamera
     execute();
 
   private:
-    std::shared_ptr<camera_info_manager::CameraInfoManager> cinfo_manager_;
-    std::string camera_calibration_file_param_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_image;
+    rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_image_compressed;
+    rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_ci;
 
-    image_transport::CameraPublisher pub_;
+    std::string camera_calibration_file_param_;
+    camera_info_manager::CameraInfoManager cim;
+    int64_t time_offset = 0;
+    
+
+    //rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_image;
+    //rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_image_compressed;
+    
+      //rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_image_compressed;
     rclcpp::QoS qos_;
     std::chrono::milliseconds freq_ = 30ms;
 
