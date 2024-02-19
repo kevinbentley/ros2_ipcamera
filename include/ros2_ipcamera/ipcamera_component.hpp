@@ -132,7 +132,7 @@ namespace ros2_ipcamera
     
       //rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_image_compressed;
     rclcpp::QoS qos_;
-    std::chrono::milliseconds freq_ = 30ms;
+    std::chrono::milliseconds freq_ = 30ms;    
 
     cv::VideoCapture cap_;
     std::string source_;

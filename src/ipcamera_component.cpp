@@ -35,10 +35,10 @@ namespace ros2_ipcamera
     this->configure();
 
     // publisher for raw and compressed image
-    pub_image = this->create_publisher<sensor_msgs::msg::Image>("~/image_raw", 1);
+    pub_image = this->create_publisher<sensor_msgs::msg::Image>("~/ipcamera/uncompressed", 1);
     pub_image_compressed =
-      this->create_publisher<sensor_msgs::msg::CompressedImage>("~/image_raw/compressed", 1);
-    pub_ci = this->create_publisher<sensor_msgs::msg::CameraInfo>("~/camera_info", 1);
+      this->create_publisher<sensor_msgs::msg::CompressedImage>("~/ipcamera/compressed", 1);
+    pub_ci = this->create_publisher<sensor_msgs::msg::CameraInfo>("~/ipcamera/camera_info", 1);
 
     this->execute();
   }
@@ -75,7 +75,6 @@ namespace ros2_ipcamera
     this->cap_.set(cv::CAP_PROP_FRAME_HEIGHT, static_cast<double>(height_));
     if (!this->cap_.isOpened()) {
       RCLCPP_ERROR(node_logger, "Could not open video stream");
-      throw std::runtime_error("Could not open video stream");
     }
 
     // TODO(Tasuku): move to on_configure() when rclcpp_lifecycle available.
@@ -123,7 +122,11 @@ namespace ros2_ipcamera
   void
   IpCamera::execute()
   {
+    rclcpp::Logger node_logger = this->get_logger();
     rclcpp::Rate loop_rate(freq_);
+    // set time offset once for accurate timing using the device time
+    if (time_offset == 0)
+      time_offset = this->now().nanoseconds();
 
     auto camera_info_msg = std::make_shared<sensor_msgs::msg::CameraInfo>(cim.getCameraInfo());
 
@@ -133,18 +136,46 @@ namespace ros2_ipcamera
     size_t frame_id = 0;
     // Our main event loop will spin until the user presses CTRL-C to exit.
     while (rclcpp::ok()) {
+      if (!this->cap_.isOpened()) 
+      {
+        RCLCPP_ERROR(node_logger, "Video stream closed, trying to re-open");
+        if(!this->cap_.open(source_))
+        {
+          std::chrono::milliseconds retry_freq = 2s;
+          rclcpp::Rate retry_wait(retry_freq);
+          retry_wait.sleep();
+          continue;
+        }
+        else
+        {
+          // Set the width and height based on command line arguments.
+          // The width, height has to match the available resolutions of the IP camera.
+          this->cap_.set(cv::CAP_PROP_FRAME_WIDTH, static_cast<double>(width_));
+          this->cap_.set(cv::CAP_PROP_FRAME_HEIGHT, static_cast<double>(height_));
+          RCLCPP_INFO(node_logger, "Video stream opened");
+        }
+        //rclcpp::shutdown();
+        //break;
+      }
       // Initialize a shared pointer to an Image message.
       auto msg = std::make_unique<sensor_msgs::msg::Image>();
       msg->is_bigendian = false;
 
+      if (pub_image_compressed->get_subscription_count()==0 && pub_image_compressed->get_subscription_count()==0)
+      {
+        loop_rate.sleep();
+        continue;
+      }
       // Get the frame from the video capture.
       bool res = this->cap_.read(frame);
       if(!res)
       {
-        //std::cout << "Frame Capture failed." << std::endl;
-        //loop_rate.sleep();        
+        RCLCPP_ERROR(node_logger, "Unable to read video frame.");
+        this->cap_.release();
+        //rclcpp::shutdown();
+        //break;
       }
-      //this->cap_ >> frame;
+      
       // Check if the frame was grabbed correctly
       if (!frame.empty()) {
         // Convert to a ROS image
@@ -152,8 +183,13 @@ namespace ros2_ipcamera
         auto msg_img = std::make_unique<sensor_msgs::msg::Image>();
         auto msg_img_compressed = std::make_unique<sensor_msgs::msg::CompressedImage>();
 
+        std_msgs::msg::Header hdr;
+        int64_t timestamp = this->get_clock()->now().nanoseconds();
+        hdr.stamp = rclcpp::Time(int64_t(timestamp) - time_offset);
+        hdr.frame_id = "camera";
         // We're getting uncompressed images from cv2
         // copy cv information into ros message
+        msg_img->header = hdr;
         msg_img->height = frame.rows;
         msg_img->width = frame.cols;
         msg_img->encoding = mat_type2encoding(frame.type());
@@ -162,14 +198,10 @@ namespace ros2_ipcamera
         size_t size = frame.step * frame.rows;
         msg_img->data.resize(size);
         memcpy(&msg_img->data[0], frame.data, size);
-        rclcpp::Time timestamp = this->get_clock()->now();
-        msg_img->header.frame_id = std::to_string(frame_id);
-        msg_img->header.stamp = timestamp;
-        camera_info_msg->header.frame_id = std::to_string(frame_id);
-        camera_info_msg->header.stamp = timestamp;
+        msg_img->header = hdr;
 
         // compress to jpeg
-        if (pub_image_compressed->get_subscription_count())        
+        if (pub_image_compressed->get_subscription_count()) 
           cv_bridge::toCvCopy(*msg_img)->toCompressedImageMsg(*msg_img_compressed);
 
         msg_img->height = frame.rows;
@@ -179,10 +211,7 @@ namespace ros2_ipcamera
         msg_img->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
         msg_img->data.resize(size);
         memcpy(&msg_img->data[0], frame.data, size);
-        msg_img->header.frame_id = std::to_string(frame_id);
-        msg_img->header.stamp = timestamp;
-        camera_info_msg->header.frame_id = std::to_string(frame_id);
-        camera_info_msg->header.stamp = timestamp;
+        msg_img->header = hdr;
 
         // compress to jpeg
         if (pub_image_compressed->get_subscription_count())
@@ -195,9 +224,7 @@ namespace ros2_ipcamera
         sensor_msgs::msg::CameraInfo ci = cim.getCameraInfo();
         
         // send image data
-        std_msgs::msg::Header hdr;
-        hdr.stamp = timestamp;
-        hdr.frame_id = "camera";
+        ci.header = hdr;
         pub_ci->publish(ci);
         ++frame_id;
       }
