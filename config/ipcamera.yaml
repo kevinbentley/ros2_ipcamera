@@ -1,6 +1,6 @@
 ipcamera:
   ros__parameters:
-    rtsp_uri: "rtsp://192.168.1.88:8554/cam"
+    rtsp_uri: "rtsp://localhost:8554/cam"
     image_topic: "image_compressed"
     image_width: 1920
     image_height: 1080
