@@ -34,11 +34,12 @@ namespace ros2_ipcamera
 
     this->configure();
 
+  
     // publisher for raw and compressed image
-    pub_image = this->create_publisher<sensor_msgs::msg::Image>("~/ipcamera/uncompressed", 1);
+    pub_image = this->create_publisher<sensor_msgs::msg::Image>("~/ipcamera/uncompressed", qos_);
     pub_image_compressed =
-      this->create_publisher<sensor_msgs::msg::CompressedImage>("~/ipcamera/compressed", 1);
-    pub_ci = this->create_publisher<sensor_msgs::msg::CameraInfo>("~/ipcamera/camera_info", 1);
+      this->create_publisher<sensor_msgs::msg::CompressedImage>("~/ipcamera/compressed", qos_);
+    pub_ci = this->create_publisher<sensor_msgs::msg::CameraInfo>("~/ipcamera/camera_info", qos_);
 
     this->execute();
   }
