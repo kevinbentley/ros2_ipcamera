@@ -39,6 +39,8 @@ namespace ros2_ipcamera
     pub_image = this->create_publisher<sensor_msgs::msg::Image>("~/ipcamera/uncompressed", qos_);
     pub_image_compressed =
       this->create_publisher<sensor_msgs::msg::CompressedImage>("~/ipcamera/compressed", qos_);
+    pub_image_compressed_scaled =
+      this->create_publisher<sensor_msgs::msg::CompressedImage>("~/ipcamera/compressed_scaled", qos_);
     pub_ci = this->create_publisher<sensor_msgs::msg::CameraInfo>("~/ipcamera/camera_info", qos_);
 
     this->execute();
@@ -183,6 +185,7 @@ namespace ros2_ipcamera
 
         auto msg_img = std::make_unique<sensor_msgs::msg::Image>();
         auto msg_img_compressed = std::make_unique<sensor_msgs::msg::CompressedImage>();
+        auto msg_img_compressed_scaled = std::make_unique<sensor_msgs::msg::CompressedImage>();
 
         std_msgs::msg::Header hdr;
         int64_t timestamp = this->get_clock()->now().nanoseconds();
@@ -218,6 +221,27 @@ namespace ros2_ipcamera
         if (pub_image_compressed->get_subscription_count())
         {
           cv_bridge::toCvCopy(*msg_img)->toCompressedImageMsg(*msg_img_compressed);
+        }
+        pub_image->publish(std::move(msg_img));
+        pub_image_compressed->publish(std::move(msg_img_compressed));
+
+        cv::Mat scaled_frame;
+        res = cv2::resize(frame,scaled_frame, cv::Size(scale_width,scale_height), 0, 0, cv::INTER_AREA);
+
+        msg_img_compressed_scaled->height = scaled_frame.rows;
+        msg_img_compressed_scaled->width = scaled_frame.cols;
+        msg_img_compressed_scaled->encoding = mat_type2encoding(scaled_frame.type());
+        msg_img_compressed_scaled->is_bigendian = (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__);
+        msg_img_compressed_scaled->step = static_cast<sensor_msgs::msg::Image::_step_type>(scaled_frame.step);
+        size_t scaled_size = scaled_frame.step * scaled_frame.rows;
+        msg_img_compressed_scaled->data.resize(scaled_size);
+        memcpy(&msg_img_compressed_scaled->data[0], scaled_frame.data, scaled_size);
+        msg_img_compressed_scaled->header = hdr;
+
+        // scale it to a different size
+        if (pub_image_compressed_scaled->get_subscription_count())
+        {
+          cv_bridge::toCvCopy(*msg_img)->toCompressedImageMsg(*msg_img_compressed_scaled);
         }
         pub_image->publish(std::move(msg_img));
         pub_image_compressed->publish(std::move(msg_img_compressed));
