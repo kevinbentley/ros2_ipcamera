@@ -226,13 +226,8 @@ namespace ros2_ipcamera
         pub_image_compressed->publish(std::move(msg_img_compressed));
 
         cv::Mat scaled_frame;
-        res = cv2::resize(frame,scaled_frame, cv::Size(scale_width,scale_height), 0, 0, cv::INTER_AREA);
+        cv::resize(frame,scaled_frame, cv::Size(scale_width,scale_height), 0, 0, cv::INTER_AREA);
 
-        msg_img_compressed_scaled->height = scaled_frame.rows;
-        msg_img_compressed_scaled->width = scaled_frame.cols;
-        msg_img_compressed_scaled->encoding = mat_type2encoding(scaled_frame.type());
-        msg_img_compressed_scaled->is_bigendian = (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__);
-        msg_img_compressed_scaled->step = static_cast<sensor_msgs::msg::Image::_step_type>(scaled_frame.step);
         size_t scaled_size = scaled_frame.step * scaled_frame.rows;
         msg_img_compressed_scaled->data.resize(scaled_size);
         memcpy(&msg_img_compressed_scaled->data[0], scaled_frame.data, scaled_size);
