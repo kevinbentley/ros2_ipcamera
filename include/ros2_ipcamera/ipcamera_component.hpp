@@ -124,8 +124,8 @@ namespace ros2_ipcamera
     rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_image_compressed_scaled;
     rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_ci;
 
-    int scale_width = 640;
-    int scale_height = 480;
+    int scale_width = 320;
+    int scale_height = 240;
 
 
     std::string camera_calibration_file_param_;
@@ -133,7 +133,7 @@ namespace ros2_ipcamera
     int64_t time_offset = 0;
     
     rclcpp::QoS qos_;
-    std::chrono::milliseconds freq_ = 30ms;    
+    std::chrono::milliseconds freq_ = 1ms;    
 
     cv::VideoCapture cap_;
     std::string source_;

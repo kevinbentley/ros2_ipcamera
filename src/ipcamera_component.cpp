@@ -24,6 +24,8 @@ namespace ros2_ipcamera
     qos_(rclcpp::QoS(rclcpp::KeepLast(1)).best_effort()
     )
   {
+    setenv("OPENCV_FFMPEG_CAPTURE_OPTIONS","max-buffers;1|drop;true",1);
+    RCLCPP_INFO(this->get_logger(), "Constructor");
     RCLCPP_INFO(this->get_logger(), "namespace: %s", this->get_namespace());
     RCLCPP_INFO(this->get_logger(), "name: %s", this->get_name());
     RCLCPP_INFO(this->get_logger(),
@@ -42,7 +44,7 @@ namespace ros2_ipcamera
     pub_image_compressed_scaled =
       this->create_publisher<sensor_msgs::msg::CompressedImage>("~/ipcamera/compressed_scaled", qos_);
     pub_ci = this->create_publisher<sensor_msgs::msg::CameraInfo>("~/ipcamera/camera_info", qos_);
-
+    RCLCPP_INFO(this->get_logger(), "End of constructor...");
     this->execute();
   }
 
@@ -71,7 +73,13 @@ namespace ros2_ipcamera
 
     // TODO(Tasuku): move to on_configure() when rclcpp_lifecycle available.
     this->cap_.open(source_);
-
+    /*
+    // Buffer size isn't supported apparently
+    auto ret = this->cap_.set(cv::CAP_PROP_BUFFERSIZE, 2);
+    std::stringstream ss;
+    ss << ret;
+    RCLCPP_INFO(node_logger, "Set Buffer Size: %s", ss.str().c_str());
+    */
     // Set the width and height based on command line arguments.
     // The width, height has to match the available resolutions of the IP camera.
     this->cap_.set(cv::CAP_PROP_FRAME_WIDTH, static_cast<double>(width_));
@@ -89,6 +97,7 @@ namespace ros2_ipcamera
       RCLCPP_WARN(node_logger, "CameraInfo URL not valid.");
       RCLCPP_WARN(node_logger, "URL IS %s", camera_calibration_file_param_.c_str());
     }
+  RCLCPP_INFO(node_logger, "Configured.");    
 
   }
 
@@ -126,6 +135,7 @@ namespace ros2_ipcamera
   IpCamera::execute()
   {
     rclcpp::Logger node_logger = this->get_logger();
+    RCLCPP_INFO(node_logger, "Starting execute.");
     rclcpp::Rate loop_rate(freq_);
     // set time offset once for accurate timing using the device time
     if (time_offset == 0)
@@ -139,9 +149,10 @@ namespace ros2_ipcamera
     size_t frame_id = 0;
     // Our main event loop will spin until the user presses CTRL-C to exit.
     while (rclcpp::ok()) {
+      //RCLCPP_INFO(node_logger, "Loop...");
       if (!this->cap_.isOpened()) 
       {
-        RCLCPP_ERROR(node_logger, "Video stream closed, trying to re-open");
+        RCLCPP_INFO(node_logger, "Video stream closed, trying to re-open");
         if(!this->cap_.open(source_))
         {
           std::chrono::milliseconds retry_freq = 2s;
@@ -160,25 +171,22 @@ namespace ros2_ipcamera
         //rclcpp::shutdown();
         //break;
       }
+
+      this->cap_.read(frame);
       // Initialize a shared pointer to an Image message.
       auto msg = std::make_unique<sensor_msgs::msg::Image>();
       msg->is_bigendian = false;
 
-      if (pub_image_compressed->get_subscription_count()==0 && pub_image_compressed->get_subscription_count()==0)
+      if (pub_image->get_subscription_count()==0 && 
+        pub_image_compressed->get_subscription_count()==0 &&
+        pub_image_compressed_scaled->get_subscription_count()==0)
       {
-        loop_rate.sleep();
+        //loop_rate.sleep();
         continue;
       }
-      // Get the frame from the video capture.
-      bool res = this->cap_.read(frame);
-      if(!res)
-      {
-        RCLCPP_ERROR(node_logger, "Unable to read video frame.");
-        this->cap_.release();
-        //rclcpp::shutdown();
-        //break;
-      }
       
+      
+        
       // Check if the frame was grabbed correctly
       if (!frame.empty()) {
         // Convert to a ROS image
@@ -204,43 +212,50 @@ namespace ros2_ipcamera
         memcpy(&msg_img->data[0], frame.data, size);
         msg_img->header = hdr;
 
-        // compress to jpeg
-        if (pub_image_compressed->get_subscription_count()) 
-          cv_bridge::toCvCopy(*msg_img)->toCompressedImageMsg(*msg_img_compressed);
-
-        msg_img->height = frame.rows;
-        msg_img->width = frame.cols;
-        msg_img->encoding = mat_type2encoding(frame.type());
-        msg_img->is_bigendian = (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__);
-        msg_img->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
-        msg_img->data.resize(size);
-        memcpy(&msg_img->data[0], frame.data, size);
-        msg_img->header = hdr;
+        // Uncompressed
+        if (pub_image->get_subscription_count()) 
+        {        
+          pub_image->publish(std::move(msg_img));
+        }
 
         // compress to jpeg
         if (pub_image_compressed->get_subscription_count())
-        {
+        {          
+          //RCLCPP_INFO(node_logger, "Compressing");
           cv_bridge::toCvCopy(*msg_img)->toCompressedImageMsg(*msg_img_compressed);
+          //RCLCPP_INFO(node_logger, "Publishing");
+          pub_image_compressed->publish(std::move(msg_img_compressed));
+          //RCLCPP_INFO(node_logger, "Done");
         }
-        pub_image->publish(std::move(msg_img));
-        pub_image_compressed->publish(std::move(msg_img_compressed));
-
-        cv::Mat scaled_frame;
-        cv::resize(frame,scaled_frame, cv::Size(scale_width,scale_height), 0, 0, cv::INTER_AREA);
-
-        size_t scaled_size = scaled_frame.step * scaled_frame.rows;
-        msg_img_compressed_scaled->data.resize(scaled_size);
-        memcpy(&msg_img_compressed_scaled->data[0], scaled_frame.data, scaled_size);
-        msg_img_compressed_scaled->header = hdr;
 
         // scale it to a different size
         if (pub_image_compressed_scaled->get_subscription_count())
         {
-          cv_bridge::toCvCopy(*msg_img)->toCompressedImageMsg(*msg_img_compressed_scaled);
-        }
-        pub_image->publish(std::move(msg_img));
-        pub_image_compressed->publish(std::move(msg_img_compressed));
+          cv::Mat scaled_frame;
+          cv::resize(frame,scaled_frame, cv::Size(scale_width,scale_height), 0, 0, cv::INTER_AREA);
+          msg_img->header = hdr;
+          msg_img->height = scaled_frame.rows;
+          msg_img->width = scaled_frame.cols;
+          msg_img->encoding = mat_type2encoding(scaled_frame.type());
+          msg_img->is_bigendian = (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__);
+          msg_img->step = static_cast<sensor_msgs::msg::Image::_step_type>(scaled_frame.step);
+          size_t size = scaled_frame.step * scaled_frame.rows;  
+          msg_img->data.resize(size);
+          memcpy(&msg_img->data[0], scaled_frame.data, size);
+          msg_img->header = hdr;
 
+          size_t scaled_size = scaled_frame.step * scaled_frame.rows;
+          
+          msg_img_compressed_scaled->data.resize(scaled_size);
+          memcpy(&msg_img_compressed_scaled->data[0], scaled_frame.data, scaled_size);
+          
+          msg_img_compressed_scaled->header = hdr;          
+          {
+            cv_bridge::toCvCopy(*msg_img)->toCompressedImageMsg(*msg_img_compressed_scaled);
+            pub_image_compressed_scaled->publish(std::move(msg_img_compressed_scaled));
+          }
+        }
+        
         sensor_msgs::msg::CameraInfo ci = cim.getCameraInfo();
         
         // send image data
